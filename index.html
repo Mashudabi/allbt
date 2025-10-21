@@ -1,0 +1,329 @@
+# Aviator — Express backend + Full Frontend
+
+This project now includes both the **Express backend** (Node.js + JSON storage) and the **full `public/index.html` frontend**, integrated to work together.
+
+---
+
+## 🖥️ `server.js` (same as before)
+
+*(Already included above; unchanged — still serves static files from `/public` and provides `/api/*` routes.)*
+
+---
+
+## 🎨 `public/index.html`
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Aviator — Jet Rise</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --accent: #f8485e;
+      --text: #e6eef6;
+      --muted: #9aa4b1;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    header {
+      background: var(--panel);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,.4);
+    }
+
+    header h1 {
+      font-size: 1.2rem;
+      color: var(--accent);
+      margin: 0;
+    }
+
+    main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .left-panel {
+      flex: 2;
+      display: flex;
+      flex-direction: column;
+      background: var(--panel);
+      margin: 10px;
+      border-radius: 12px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .game-area {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: radial-gradient(circle at bottom center, #0b182a 0%, #0d1117 100%);
+    }
+
+    .plane {
+      position: absolute;
+      bottom: 20px;
+      left: 40px;
+      width: 50px;
+      height: 50px;
+      background: url('https://cdn-icons-png.flaticon.com/512/859/859270.png') no-repeat center / contain;
+      transform-origin: center;
+      transition: transform 0.1s linear;
+    }
+
+    .multiplier-display {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.4);
+      padding: 5px 12px;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 1.4rem;
+    }
+
+    .stake-panel {
+      flex: none;
+      padding: 12px;
+      background: #11151d;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .stake-panel input, .stake-panel button {
+      font-size: 1rem;
+      border-radius: 6px;
+      padding: 8px 10px;
+      border: none;
+    }
+
+    .stake-panel input {
+      background: #0f141c;
+      color: var(--text);
+    }
+
+    .stake-panel button {
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+    }
+
+    .stake-panel button:hover { opacity: 0.85; }
+
+    .right-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      margin: 10px 10px 10px 0;
+      background: var(--panel);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .chat-log {
+      flex: 1;
+      padding: 10px;
+      overflow-y: auto;
+      font-size: 0.9rem;
+      background: #11151d;
+    }
+
+    .log-entry { color: var(--muted); margin: 3px 0; }
+
+    footer {
+      text-align: center;
+      font-size: 0.8rem;
+      padding: 8px;
+      background: var(--panel);
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Aviator Jet</h1>
+    <div id="user-info">Not logged in</div>
+  </header>
+  <main>
+    <div class="left-panel">
+      <div class="game-area">
+        <div class="multiplier-display" id="multiplier">x1.00</div>
+        <div class="plane" id="plane"></div>
+      </div>
+      <div class="stake-panel">
+        <input id="bet-amount" type="number" min="10" max="500" placeholder="Bet amount" />
+        <button id="place-bet">Place Bet</button>
+        <button id="cash-out" disabled>Cash Out</button>
+        <button id="deposit">Deposit +100</button>
+        <button id="withdraw">Withdraw 50</button>
+      </div>
+      <div class="chat-log" id="chat"></div>
+    </div>
+    <div class="right-panel">
+      <div class="chat-log" id="log"></div>
+    </div>
+  </main>
+  <footer>
+    <span>© 2025 Aviator Simulation — Powered by Express Backend</span>
+  </footer>
+
+  <script>
+    const apiBase = '/api';
+    let user = null;
+    let token = null;
+    let currentRound = null;
+    let multiplier = 1.0;
+    let crashAt = 0;
+    let interval = null;
+
+    const ui = {
+      plane: document.getElementById('plane'),
+      mult: document.getElementById('multiplier'),
+      bet: document.getElementById('place-bet'),
+      cash: document.getElementById('cash-out'),
+      betAmt: document.getElementById('bet-amount'),
+      chat: document.getElementById('chat'),
+      log: document.getElementById('log'),
+      user: document.getElementById('user-info')
+    };
+
+    function log(msg){
+      const e = document.createElement('div');
+      e.className = 'log-entry';
+      e.textContent = msg;
+      ui.chat.appendChild(e);
+      ui.chat.scrollTop = ui.chat.scrollHeight;
+    }
+
+    async function signup(name, phone, password){
+      const r = await fetch(apiBase + '/auth/signup', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, phone, password })
+      });
+      return await r.json();
+    }
+
+    async function login(phone, password){
+      const r = await fetch(apiBase + '/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, password })
+      });
+      const data = await r.json();
+      if(data.ok){ user = data.user; token = data.token; updateUser(); }
+      return data;
+    }
+
+    async function startRound(){
+      const r = await fetch(apiBase + '/rounds/start', { method:'POST' });
+      const data = await r.json();
+      if(data.ok){ currentRound = data.round; crashAt = data.round.crashAt; beginFlight(); }
+    }
+
+    function beginFlight(){
+      multiplier = 1.00;
+      ui.cash.disabled = false;
+      ui.bet.disabled = true;
+      log('Round ' + currentRound.id + ' started! Crash at x' + crashAt.toFixed(2));
+      let y = 20, x = 40;
+      clearInterval(interval);
+      interval = setInterval(()=>{
+        multiplier += 0.02;
+        ui.mult.textContent = 'x' + multiplier.toFixed(2);
+        y += 2; x += 1;
+        ui.plane.style.transform = `translate(${x}px,-${y}px) rotate(${y/5}deg)`;
+        if(multiplier >= crashAt){ crash(); }
+      }, 100);
+    }
+
+    async function crash(){
+      clearInterval(interval);
+      ui.bet.disabled = false;
+      ui.cash.disabled = true;
+      log('💥 Crashed at x' + crashAt.toFixed(2));
+      setTimeout(startRound, 4000);
+    }
+
+    async function placeBet(){
+      const amt = Number(ui.betAmt.value || 0);
+      if(!user){ await login('+254700000001','alice123'); }
+      const r = await fetch(apiBase + `/rounds/${currentRound.id}/bet`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-session-token': token },
+        body: JSON.stringify({ amount: amt })
+      });
+      const data = await r.json();
+      if(data.ok){ log('Bet placed: ' + amt); }
+      else log('Bet failed: ' + JSON.stringify(data));
+    }
+
+    async function cashOut(){
+      const r = await fetch(apiBase + `/rounds/${currentRound.id}/cash`, {
+        method:'POST', headers:{ 'Content-Type':'application/json', 'x-session-token': token },
+        body: JSON.stringify({ multiplier })
+      });
+      const data = await r.json();
+      if(data.ok && data.result==='win') log('Cashed out! Won ' + data.payout.toFixed(2));
+      else log('Lost or crashed before cashout.');
+      ui.cash.disabled = true;
+    }
+
+    async function deposit(){
+      const r = await fetch(apiBase + '/account/deposit', {
+        method:'POST', headers:{ 'Content-Type':'application/json','x-session-token': token },
+        body: JSON.stringify({ amount: 100 })
+      });
+      const data = await r.json();
+      if(data.ok){ user.balance = data.balance; updateUser(); }
+    }
+
+    async function withdraw(){
+      const r = await fetch(apiBase + '/account/withdraw', {
+        method:'POST', headers:{ 'Content-Type':'application/json','x-session-token': token },
+        body: JSON.stringify({ amount: 50 })
+      });
+      const data = await r.json();
+      if(data.ok){ user.balance = data.balance; updateUser(); }
+    }
+
+    function updateUser(){
+      ui.user.textContent = `${user.name} — KES ${user.balance.toFixed(2)}`;
+    }
+
+    ui.bet.onclick = placeBet;
+    ui.cash.onclick = cashOut;
+    ui.deposit.onclick = deposit;
+    ui.withdraw.onclick = withdraw;
+
+    // Init demo: login as default user and start round
+    (async()=>{ await login('+254700000001','alice123'); await startRound(); })();
+  </script>
+</body>
+</html>
+```
+
+---
+
+✅ This frontend connects directly to your backend APIs.
+
+* It logs in automatically using the demo user `+254700000001 / alice123`.
+* It visually animates the plane ascent and crash.
+* It allows **bet, cash-out, deposit, withdraw** in sync with backend.
+
+Would you like me to now add **socket.io live updates** (so all connected clients see the same multiplier and crash simultaneously)?
